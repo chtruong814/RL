@@ -144,6 +144,7 @@ jobs:
 
             else
               # Case 4: Commits have diverged or have no common ancestor
+              echo "Checking if commits have diverged or have no common ancestor"
               common_ancestor=$(git merge-base "$target_commit" "$current_commit" 2>/dev/null)
 
               if [ -n "$common_ancestor" ]; then
