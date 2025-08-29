@@ -13,3 +13,6 @@
 	url = https://github.com/NVIDIA-NeMo/Automodel.git
 	branch = nemo-rl-submodule
 	shallow = true
+[submodule "3rdparty/NeMo-workspace/NeMo"]
+	path = 3rdparty/NeMo-workspace/NeMo
+	url = https://github.com/NVIDIA/NeMo.git
