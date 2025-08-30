@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 """
+TEST
 This is a work around to ensure whenever NeMo RL is imported, that we
 add Megatron-LM to the python path. This is because the only sub-package
 that's officially installed is megatron.core. So we add the whole repo into
