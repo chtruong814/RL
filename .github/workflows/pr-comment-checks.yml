@@ -21,7 +21,6 @@ jobs:
 
   submodule-check-comment:
     name: Post submodule check comment
-    needs: [submodule-check]
     uses: ./.github/workflows/_pr_comment.yml
     with:
       pr_number: "${{ github.event.number }}"
@@ -29,7 +28,6 @@ jobs:
 
   automodel-integration-comment:
     name: Post automodel integration comment
-    needs: [automodel-integration-check]
     uses: ./.github/workflows/_pr_comment.yml
     with:
       pr_number: "${{ github.event.number }}"
