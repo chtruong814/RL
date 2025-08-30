@@ -15,24 +15,26 @@
 name: "Automodel Integration and Submodule Checks"
 
 on:
-  pull_request:
+  pull_request_target:
 
 jobs:
 
-  submodule-check:
-    name: Check submodule fast-forward
-    uses: ./.github/workflows/_submodule_check.yml
+  submodule-check-comment:
+    name: Post submodule check comment
+    uses: ./.github/workflows/_pr_comment.yml
     with:
-      base_ref: ${{ github.base_ref }}
-      head_ref: ${{ github.head_ref }}
-      pr_number: ${{ github.event.number }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
+      pr_number: "${{ github.event.number }}"
+      artifact_name: submodule-check
+      head_sha: "${{ github.event.pull_request.head.sha }}"
+      max_retries: 30
+      sleep_duration: 10
 
-  automodel-integration-check:
-    name: Check if changes in nemo-automodel are in sync with nemo-rl and vice versa
-    uses: ./.github/workflows/_automodel_integration_check.yml
+  automodel-integration-comment:
+    name: Post automodel integration comment
+    uses: ./.github/workflows/_pr_comment.yml
     with:
-      base_ref: ${{ github.base_ref }}
-      head_ref: ${{ github.head_ref }}
-      pr_number: ${{ github.event.number }}
-      head_sha: ${{ github.event.pull_request.head.sha }}
+      pr_number: "${{ github.event.number }}"
+      artifact_name: automodel-integration-check
+      head_sha: "${{ github.event.pull_request.head.sha }}"
+      max_retries: 30
+      sleep_duration: 10
