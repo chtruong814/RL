@@ -1,0 +1,121 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: "PR Comment"
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        required: true
+        type: string
+        description: "Pull request number"
+      artifact_name:
+        required: true
+        type: string
+        description: "Name of the artifact containing the comment body"
+      max_retries:
+        required: false
+        type: number
+        default: 30
+        description: "Maximum number of polling attempts"
+      sleep_duration:
+        required: false
+        type: number
+        default: 10
+        description: "Sleep duration in seconds between polling attempts"
+
+jobs:
+  comment:
+    name: Comment on PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for and download artifact
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const artifactName = ${{ toJSON(inputs.artifact_name) }};
+            const maxRetries = ${{ inputs.max_retries }};
+            const sleepDuration = ${{ inputs.sleep_duration }};
+
+            console.log(`Waiting for artifact: ${artifactName}`);
+            console.log(`Max retries: ${maxRetries}, Sleep duration: ${sleepDuration}s`);
+
+            for (let attempt = 1; attempt <= maxRetries; attempt++) {
+              console.log(`Attempt ${attempt}/${maxRetries}: Checking for artifact...`);
+
+              try {
+                // Check if artifact exists
+                const response = await github.rest.actions.listWorkflowRunArtifacts({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId
+                });
+
+                const artifact = response.data.artifacts.find(a => a.name === artifactName);
+                if (artifact) {
+                  console.log(`Found artifact: ${artifactName}`);
+                  return; // Exit successfully
+                }
+
+                if (attempt < maxRetries) {
+                  console.log(`Artifact not found, waiting ${sleepDuration} seconds...`);
+                  await new Promise(resolve => setTimeout(resolve, sleepDuration * 1000));
+                }
+              } catch (error) {
+                console.log(`Error checking for artifact: ${error.message}`);
+                if (attempt < maxRetries) {
+                  await new Promise(resolve => setTimeout(resolve, sleepDuration * 1000));
+                }
+              }
+            }
+
+            throw new Error(`Artifact '${artifactName}' not found after ${maxRetries} attempts`);
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: comment-artifact
+
+      - name: Extract comment body
+        id: extract-comment
+        run: |
+          cd comment-artifact
+
+          # Read the comment body and set it as output
+          {
+            echo 'COMMENT_BODY<<EOF'
+            cat comment.txt
+            echo
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const commentBody = `${{ steps.extract-comment.outputs.COMMENT_BODY }}`;
+            const prNumber = ${{ toJSON(inputs.pr_number) }};
+
+            console.log(`Creating comment on PR #${prNumber}`);
+
+            await github.rest.issues.createComment({
+              issue_number: parseInt(prNumber),
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: commentBody
+            });
+
+            console.log('Comment created successfully');
