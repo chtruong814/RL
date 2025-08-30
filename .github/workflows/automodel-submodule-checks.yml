@@ -12,15 +12,37 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-name: "PR Comment on Automodel and Submodule Checks"
+name: "Automodel Integration and Submodule Checks"
 
 on:
+  pull_request:
   pull_request_target:
 
 jobs:
 
+  submodule-check:
+    name: Check submodule fast-forward
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/_submodule_check.yml
+    with:
+      base_ref: ${{ github.base_ref }}
+      head_ref: ${{ github.head_ref }}
+      pr_number: ${{ github.event.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+
+  automodel-integration-check:
+    name: Check if changes in nemo-automodel are in sync with nemo-rl and vice versa
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/_automodel_integration_check.yml
+    with:
+      base_ref: ${{ github.base_ref }}
+      head_ref: ${{ github.head_ref }}
+      pr_number: ${{ github.event.number }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+
   submodule-check-comment:
     name: Post submodule check comment
+    if: github.event_name == 'pull_request_target'
     uses: ./.github/workflows/_pr_comment.yml
     with:
       pr_number: "${{ github.event.number }}"
@@ -28,6 +50,7 @@ jobs:
 
   automodel-integration-comment:
     name: Post automodel integration comment
+    if: github.event_name == 'pull_request_target'
     uses: ./.github/workflows/_pr_comment.yml
     with:
       pr_number: "${{ github.event.number }}"
