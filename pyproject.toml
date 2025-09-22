@@ -143,6 +143,9 @@ test = [
     "pytest-testmon",
 ]
 
+[tool.uv]
+managed = true
+
 [tool.uv.sources]
 megatron-core = { workspace = true }
 nemo-automodel = { workspace = true }
