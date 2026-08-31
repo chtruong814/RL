@@ -19,7 +19,7 @@ from pathlib import Path
 from nemo_rl.distributed.ray_actor_environment_registry import (
     ACTOR_ENVIRONMENT_REGISTRY,
 )
-from nemo_rl.utils.venvs import create_local_venv
+from nemo_rl.utils.venvs import create_local_venv, get_canonical_venv_name
 
 
 def prefetch_venvs(filters=None, negative_filters=None):
@@ -68,20 +68,21 @@ def prefetch_venvs(filters=None, negative_filters=None):
                 venv_configs[py_executable] = []
             venv_configs[py_executable].append(actor_fqn)
 
-    # Create venvs
+    # Create one venv for each distinct dependency specification.
+    venv_python_paths = {}
     for py_executable, actor_fqns in venv_configs.items():
         print(f"\nCreating venvs for py_executable: {py_executable}")
-        for actor_fqn in actor_fqns:
-            print(f"  Creating venv for: {actor_fqn}")
-            try:
-                python_path = create_local_venv(py_executable, actor_fqn)
-                print(f"    Success: {python_path}")
-                prefetched.append(actor_fqn)
-            except Exception as e:
-                print(f"    Error: {e}")
-                failed.append(actor_fqn)
-                # Continue with other venvs even if one fails
-                continue
+        venv_name = get_canonical_venv_name(py_executable)
+        try:
+            python_path = create_local_venv(py_executable, venv_name)
+            venv_python_paths[py_executable] = python_path
+            print(f"  Shared by {len(actor_fqns)} actor(s): {python_path}")
+            prefetched.extend(actor_fqns)
+        except Exception as e:
+            print(f"  Error: {e}")
+            failed.extend(actor_fqns)
+            # Continue with other dependency specifications.
+            continue
 
     # Print summary
     print("\n" + "=" * 50)
@@ -107,16 +108,17 @@ def prefetch_venvs(filters=None, negative_filters=None):
             print(f"    - {actor_fqn}")
 
     # Create convenience python wrapper scripts for frozen environment support (container-only)
-    create_frozen_environment_symlinks(venv_configs)
+    create_frozen_environment_symlinks(venv_configs, venv_python_paths)
 
 
-def create_frozen_environment_symlinks(venv_configs):
+def create_frozen_environment_symlinks(venv_configs, venv_python_paths):
     """Create python-{ClassName} wrapper scripts in /usr/local/bin for frozen environment support.
 
     Only runs in container (when NRL_CONTAINER=1 is set).
 
     Args:
-        venv_configs: Dictionary mapping py_executable to list of actor FQNs
+        venv_configs: Dictionary mapping py_executable to list of actor FQNs.
+        venv_python_paths: Dictionary mapping py_executable to its shared Python.
     """
     # Only create wrapper scripts in container
     if not os.environ.get("NRL_CONTAINER"):
@@ -131,30 +133,26 @@ def create_frozen_environment_symlinks(venv_configs):
     wrapper_mappings = {}
 
     for py_executable, actor_fqns in venv_configs.items():
+        python_path = venv_python_paths.get(py_executable)
+        if python_path is None:
+            continue
         for actor_fqn in actor_fqns:
             # Extract class name from FQN (last part)
             # e.g., "nemo_rl.models.policy.megatron_policy_worker.MegatronPolicyWorker" -> "MegatronPolicyWorker"
             class_name = actor_fqn.split(".")[-1]
 
-            # Get the venv path that was created
-            try:
-                python_path = create_local_venv(py_executable, actor_fqn)
-
-                # Check for collisions
-                if class_name in wrapper_mappings:
-                    existing_path = wrapper_mappings[class_name]
-                    if existing_path != python_path:
-                        raise RuntimeError(
-                            f"Collision detected: Multiple venvs want to use name '{class_name}'\n"
-                            f"  Existing: {existing_path}\n"
-                            f"  New: {python_path}\n"
-                            f"This indicates two different worker classes have the same name."
-                        )
-                else:
-                    wrapper_mappings[class_name] = python_path
-            except Exception as e:
-                print(f"  Warning: Could not get venv path for {actor_fqn}: {e}")
-                continue
+            # Check for collisions
+            if class_name in wrapper_mappings:
+                existing_path = wrapper_mappings[class_name]
+                if existing_path != python_path:
+                    raise RuntimeError(
+                        f"Collision detected: Multiple venvs want to use name '{class_name}'\n"
+                        f"  Existing: {existing_path}\n"
+                        f"  New: {python_path}\n"
+                        f"This indicates two different worker classes have the same name."
+                    )
+            else:
+                wrapper_mappings[class_name] = python_path
 
     # Create wrapper scripts
     wrapper_dir = Path("/usr/local/bin")

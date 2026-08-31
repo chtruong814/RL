@@ -11,11 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import hashlib
+import json
 import logging
 import os
 import shlex
 import shutil
 import subprocess
+import sys
+import sysconfig
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -28,6 +32,53 @@ git_root = os.path.abspath(os.path.join(dir_path, "../.."))
 DEFAULT_VENV_DIR = os.path.join(git_root, "venvs")
 
 logger = logging.getLogger(__name__)
+
+
+def get_canonical_venv_name(py_executable: str) -> str:
+    """Return a stable venv name for a uv environment specification.
+
+    Actors that use the same uv command share one environment. Dependency files,
+    Python, and platform are included so an existing shared venv is not reused
+    after an input that can change the resolved environment changes.
+
+    Args:
+        py_executable: The uv command used to materialize the environment.
+
+    Returns:
+        A human-readable environment label followed by its SHA-256 identity.
+    """
+    command = shlex.split(py_executable)
+    dependency_files = {}
+    for filename in ("pyproject.toml", "uv.lock"):
+        path = Path(git_root) / filename
+        dependency_files[filename] = hashlib.sha256(path.read_bytes()).hexdigest()
+
+    payload = {
+        "schema_version": 1,
+        "command": command,
+        "dependency_files": dependency_files,
+        "python": {
+            "implementation": sys.implementation.name,
+            "version": list(sys.version_info[:3]),
+        },
+        "platform": sysconfig.get_platform(),
+    }
+    digest = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+    selectors = []
+    for index, arg in enumerate(command):
+        if arg in ("--extra", "--group") and index + 1 < len(command):
+            selectors.append(command[index + 1])
+        elif arg.startswith(("--extra=", "--group=")):
+            selectors.append(arg.split("=", 1)[1])
+    label = "-".join(sorted(selectors)) or "base"
+    safe_label = "".join(
+        character if character.isalnum() or character in "-." else "-"
+        for character in label
+    )
+    return f"{safe_label}-{digest}"
 
 
 @lru_cache(maxsize=None)
@@ -158,6 +209,10 @@ def create_local_venv_on_each_node(py_executable: str, venv_name: str):
     Returns:
         str: Path to the python executable in the created virtual environment
     """
+    requested_venv_name = venv_name
+    venv_name = get_canonical_venv_name(py_executable)
+    logger.info("Using shared venv %s for %s", venv_name, requested_venv_name)
+
     # Skip nodes with 0 CPUs (e.g. unschedulable head nodes) — including them
     # makes the STRICT_SPREAD placement group infeasible.
     nodes = [

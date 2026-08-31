@@ -16,7 +16,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from nemo_rl.utils.venvs import create_local_venv
+from nemo_rl.utils.venvs import create_local_venv, get_canonical_venv_name
 from tests.unit.conftest import TEST_ASSETS_DIR
 
 
@@ -48,3 +48,22 @@ def test_create_local_venv():
             # Verify the command executed successfully (return code 0)
             assert result.returncode == 0, f"Failed to import sphinx: {result.stderr}"
             assert "Sphinx package is installed" in result.stdout
+
+
+def test_canonical_venv_name_tracks_environment_inputs(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'test'\n")
+    lock_path = tmp_path / "uv.lock"
+    lock_path.write_text("version = 1\n")
+
+    with patch("nemo_rl.utils.venvs.git_root", str(tmp_path)):
+        vllm_name = get_canonical_venv_name("uv run --locked --extra vllm")
+        repeated_name = get_canonical_venv_name("uv run --locked --extra vllm")
+        mcore_name = get_canonical_venv_name("uv run --locked --extra mcore")
+        lock_path.write_text("version = 2\n")
+        updated_lock_name = get_canonical_venv_name("uv run --locked --extra vllm")
+
+    assert vllm_name == repeated_name
+    assert vllm_name.startswith("vllm-")
+    assert mcore_name.startswith("mcore-")
+    assert vllm_name != mcore_name
+    assert vllm_name != updated_lock_name

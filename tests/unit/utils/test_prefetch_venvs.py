@@ -11,16 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import os
 from unittest.mock import patch
 
 import pytest
 
 import nemo_rl.utils.prefetch_venvs as prefetch_venvs_module
-
-# When NRL_CONTAINER is set, create_frozen_environment_symlinks also calls
-# create_local_venv for each actor, effectively doubling the call count
-CALL_MULTIPLIER = 2 if os.environ.get("NRL_CONTAINER") else 1
 
 
 @pytest.fixture
@@ -56,24 +51,10 @@ class TestPrefetchVenvs:
 
             prefetch_venvs_func(filters=None)
 
-            assert mock_create_venv.call_count == 3 * CALL_MULTIPLIER
+            assert mock_create_venv.call_count == 2
 
-            # Verify the actors that were called
-            call_args = [call[0] for call in mock_create_venv.call_args_list]
-            actor_fqns = [args[1] for args in call_args]
-
-            assert (
-                "nemo_rl.models.generation.vllm.vllm_worker.VllmGenerationWorker"
-                in actor_fqns
-            )
-            assert (
-                "nemo_rl.models.policy.workers.dtensor_policy_worker.DTensorPolicyWorker"
-                in actor_fqns
-            )
-            assert (
-                "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
-                in actor_fqns
-            )
+            commands = [call.args[0] for call in mock_create_venv.call_args_list]
+            assert commands == ["uv run --group vllm", "uv run --group mcore"]
 
     def test_prefetch_venvs_single_filter(self, prefetch_venvs_func):
         """Test filtering with a single filter string."""
@@ -85,13 +66,11 @@ class TestPrefetchVenvs:
             prefetch_venvs_func(filters=["vllm"])
 
             # Should only create venvs for actors containing "vllm" (1 actor)
-            assert mock_create_venv.call_count == 1 * CALL_MULTIPLIER
+            assert mock_create_venv.call_count == 1
 
             call_args = mock_create_venv.call_args[0]
-            assert (
-                call_args[1]
-                == "nemo_rl.models.generation.vllm.vllm_worker.VllmGenerationWorker"
-            )
+            assert call_args[0] == "uv run --group vllm"
+            assert call_args[1].startswith("vllm-")
 
     def test_prefetch_venvs_multiple_filters(self, prefetch_venvs_func):
         """Test filtering with multiple filter strings (OR logic)."""
@@ -103,19 +82,10 @@ class TestPrefetchVenvs:
             prefetch_venvs_func(filters=["vllm", "megatron"])
 
             # Should create venvs for actors containing "vllm" OR "megatron" (2 actors)
-            assert mock_create_venv.call_count == 2 * CALL_MULTIPLIER
+            assert mock_create_venv.call_count == 2
 
-            call_args = [call[0] for call in mock_create_venv.call_args_list]
-            actor_fqns = [args[1] for args in call_args]
-
-            assert (
-                "nemo_rl.models.generation.vllm.vllm_worker.VllmGenerationWorker"
-                in actor_fqns
-            )
-            assert (
-                "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
-                in actor_fqns
-            )
+            commands = [call.args[0] for call in mock_create_venv.call_args_list]
+            assert commands == ["uv run --group vllm", "uv run --group mcore"]
 
     def test_prefetch_venvs_filter_no_match(self, prefetch_venvs_func):
         """Test that no venvs are created when filter matches nothing."""
@@ -152,19 +122,10 @@ class TestPrefetchVenvs:
             # "policy" should match both dtensor_policy_worker and megatron_policy_worker
             prefetch_venvs_func(filters=["policy"])
 
-            assert mock_create_venv.call_count == 2 * CALL_MULTIPLIER
+            assert mock_create_venv.call_count == 2
 
-            call_args = [call[0] for call in mock_create_venv.call_args_list]
-            actor_fqns = [args[1] for args in call_args]
-
-            assert (
-                "nemo_rl.models.policy.workers.dtensor_policy_worker.DTensorPolicyWorker"
-                in actor_fqns
-            )
-            assert (
-                "nemo_rl.models.policy.workers.megatron_policy_worker.MegatronPolicyWorker"
-                in actor_fqns
-            )
+            commands = [call.args[0] for call in mock_create_venv.call_args_list]
+            assert commands == ["uv run --group vllm", "uv run --group mcore"]
 
     def test_prefetch_venvs_empty_filter_list(self, prefetch_venvs_func):
         """Test that empty filter list is treated as no filtering (falsy)."""
@@ -176,26 +137,24 @@ class TestPrefetchVenvs:
             # Empty list should be falsy and prefetch all
             prefetch_venvs_func(filters=[])
 
-            # Should create venvs for all uv-based actors (3 total)
-            assert mock_create_venv.call_count == 3 * CALL_MULTIPLIER
+            # Three actors share two distinct uv environments.
+            assert mock_create_venv.call_count == 2
 
     def test_prefetch_venvs_continues_on_error(self, prefetch_venvs_func):
         """Test that prefetching continues even if one venv creation fails."""
         with patch(
             "nemo_rl.utils.prefetch_venvs.create_local_venv"
         ) as mock_create_venv:
-            # Provide enough return values for both prefetch and frozen env symlinks
             mock_create_venv.side_effect = [
                 Exception("Test error"),
                 "/path/to/venv/bin/python",
-                "/path/to/venv/bin/python",
-            ] * CALL_MULTIPLIER
+            ]
 
             # Should not raise, should continue with other venvs
             prefetch_venvs_func(filters=None)
 
-            # All 3 uv-based actors should have been attempted
-            assert mock_create_venv.call_count == 3 * CALL_MULTIPLIER
+            # Both distinct uv environments should have been attempted.
+            assert mock_create_venv.call_count == 2
 
     def test_prefetch_venvs_case_sensitive_filter(self, prefetch_venvs_func):
         """Test that filters are case-sensitive."""
@@ -257,16 +216,14 @@ class TestPrefetchVenvs:
         with patch(
             "nemo_rl.utils.prefetch_venvs.create_local_venv"
         ) as mock_create_venv:
-            # Provide enough return values for both prefetch and frozen env symlinks
             mock_create_venv.side_effect = [
                 Exception("Test error"),
                 "/path/to/venv/bin/python",
-                "/path/to/venv/bin/python",
-            ] * CALL_MULTIPLIER
+            ]
 
             prefetch_venvs_func(filters=None)
 
             captured = capsys.readouterr()
             assert "Venv prefetching complete! Summary:" in captured.out
-            assert "Prefetched: 2" in captured.out
-            assert "Failed: 1" in captured.out
+            assert "Prefetched: 1" in captured.out
+            assert "Failed: 2" in captured.out
